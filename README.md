@@ -9,6 +9,7 @@ Polls `flash.biteagle.xyz` fast-news records and pushes new items to a Telegram 
 - Stores pulled records in `data/news.jsonl`
 - Sends Telegram messages with a clean format
 - Supports Telegram forum topics through `message_thread_id`
+- Polls BWEnews RSS as a second source, with RSS de-duplication
 - Includes a source-discovery helper for historical `source` host scanning
 
 ## Configuration
@@ -20,6 +21,7 @@ TELEGRAM_BOT_TOKEN=123456:replace_me
 TELEGRAM_CHAT_ID=-1001234567890
 TELEGRAM_MESSAGE_THREAD_ID=2716
 TELEGRAM_PROXY=http://127.0.0.1:7890
+BWE_RSS_URL=https://rss-public.bwe-ws.com/
 ```
 
 `TELEGRAM_PROXY` is optional. Leave it empty on a server that can reach Telegram directly.
@@ -38,6 +40,12 @@ node biteagle_news_feed.mjs \
   --interval-ms 15000 \
   --backfill 30 \
   --telegram
+```
+
+BWEnews RSS polling is enabled by default. Disable it with:
+
+```bash
+node biteagle_news_feed.mjs --mode poll --telegram --no-bwe-rss
 ```
 
 To override the Telegram target from the command line:
@@ -73,3 +81,5 @@ The BitEagle frontend currently exposes detail-style endpoints rather than a pub
 - `/api/news/comment?news_id=<numeric-id>`
 
 The poller therefore uses `latest` as the stream cursor and fetches missing ids to avoid gaps.
+
+BWEnews RSS is read from `https://rss-public.bwe-ws.com/`. The poller prefers the embedded `source:` URL for the Telegram `查看详情` link, falling back to the BWE Telegram message link when no original source is present.
