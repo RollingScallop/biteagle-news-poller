@@ -1,0 +1,15 @@
+{
+  "name": "biteagle-news-poller",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "poll": "node biteagle_news_feed.mjs --mode poll --telegram",
+    "once": "node biteagle_news_feed.mjs --mode once",
+    "discover:sources": "node discover_biteagle_sources.mjs --limit 3000 --concurrency 8"
+  },
+  "dependencies": {
+    "docx": "^9.6.1"
+  }
+}
+

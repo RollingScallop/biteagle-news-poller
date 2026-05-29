@@ -1,0 +1,17 @@
+.DS_Store
+
+# Secrets and local config
+bot.txt
+.env
+.env.*
+!.env.example
+
+# Runtime output
+data/
+exports/
+*.log
+*.pid
+
+# Dependencies
+node_modules/
+
