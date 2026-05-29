@@ -14,4 +14,4 @@ exports/
 
 # Dependencies
 node_modules/
-
+.venv/

@@ -62,6 +62,10 @@ function parseArgs() {
     telegramChatId: args.get("telegram-chat-id") || process.env.TELEGRAM_CHAT_ID || null,
     telegramProxy: args.get("telegram-proxy") || process.env.TELEGRAM_PROXY || "http://127.0.0.1:7890",
     telegramThreadId: args.get("telegram-thread-id") || process.env.TELEGRAM_MESSAGE_THREAD_ID || null,
+    telegramEn: args.has("telegram-en") || Boolean(process.env.TELEGRAM_EN_CHAT_ID),
+    telegramEnChatId: args.get("telegram-en-chat-id") || process.env.TELEGRAM_EN_CHAT_ID || null,
+    telegramEnThreadId: args.get("telegram-en-thread-id") || process.env.TELEGRAM_EN_MESSAGE_THREAD_ID || null,
+    translateUrl: args.get("translate-url") || process.env.TRANSLATE_URL || "http://127.0.0.1:5000/translate",
     bweRss: !args.has("no-bwe-rss"),
     bweRssUrl: args.get("bwe-rss-url") || process.env.BWE_RSS_URL || BWE_RSS_URL,
   };
@@ -259,8 +263,72 @@ function parseBweRss(xml) {
   });
 }
 
-async function sendTelegram(item, options) {
+async function translateText(text, options) {
+  const value = String(text || "").trim();
+  if (!value) return "";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(options.translateUrl, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        q: value,
+        source: "zh-Hans",
+        target: "en",
+        format: "text",
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    return body.translatedText || "";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function sendTelegramPayload(payload, token, proxy) {
   const { spawn } = await import("node:child_process");
+  const curlConfig = [
+    proxy ? `proxy = "${proxy}"` : null,
+    `url = "https://api.telegram.org/bot${token}/sendMessage"`,
+    `request = "POST"`,
+    `header = "content-type: application/json"`,
+    `data = ${JSON.stringify(JSON.stringify(payload))}`,
+    `silent`,
+    `show-error`,
+    `max-time = 20`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("/usr/bin/curl", ["-K", "-"], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.on("error", reject);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("close", (code) => {
+      if (code !== 0) return reject(new Error(`Telegram curl failed: ${stderr.trim()}`));
+      try {
+        const body = JSON.parse(stdout);
+        if (!body.ok) return reject(new Error(`Telegram API failed: ${body.description}`));
+        resolve(body.result);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin.end(curlConfig);
+  });
+}
+
+async function sendTelegram(item, options) {
   const { token, chatId, messageThreadId } = await readTelegramConfig(options.telegramBotFile);
   const targetChatId = options.telegramChatId || chatId;
   const content = cleanNewsContent(stripHtml(item.content));
@@ -279,7 +347,7 @@ async function sendTelegram(item, options) {
     .filter(Boolean)
     .join("\n");
 
-  const payload = JSON.stringify({
+  const result = await sendTelegramPayload({
     chat_id: targetChatId,
     ...(options.telegramThreadId || messageThreadId
       ? { message_thread_id: Number(options.telegramThreadId || messageThreadId) }
@@ -287,46 +355,40 @@ async function sendTelegram(item, options) {
     text: message,
     parse_mode: "HTML",
     disable_web_page_preview: true,
-  });
-  const curlConfig = [
-    options.telegramProxy ? `proxy = "${options.telegramProxy}"` : null,
-    `url = "https://api.telegram.org/bot${token}/sendMessage"`,
-    `request = "POST"`,
-    `header = "content-type: application/json"`,
-    `data = ${JSON.stringify(payload)}`,
-    `silent`,
-    `show-error`,
-    `max-time = 20`,
+  }, token, options.telegramProxy);
+  console.log(`  telegram: sent message_id=${result.message_id}`);
+}
+
+async function sendTelegramEnglish(item, options) {
+  if (!options.telegramEn || !options.telegramEnChatId) return;
+  const { token } = await readTelegramConfig(options.telegramBotFile);
+  const content = cleanNewsContent(stripHtml(item.content)).slice(0, 900);
+  const [translatedTitle, translatedBody] = await Promise.all([
+    translateText(item.title, options),
+    translateText(content, options),
+  ]);
+  const title = escapeTelegramHtml(translatedTitle || item.title);
+  const body = escapeTelegramHtml((translatedBody || "").slice(0, 1200));
+  const time = item.created_at ? `Time: ${escapeTelegramHtml(item.created_at)}` : null;
+  const detail = item.source
+    ? `<a href="${escapeTelegramHtml(item.source)}">Read more</a>`
+    : null;
+  const message = [
+    `<b>${title}</b>`,
+    time,
+    body ? `\n${body}` : null,
+    detail ? `\n${detail}` : null,
   ]
     .filter(Boolean)
     .join("\n");
-
-  await new Promise((resolve, reject) => {
-    const child = spawn("/usr/bin/curl", ["-K", "-"], { stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.on("error", (error) => {
-      reject(error);
-    });
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("close", (code) => {
-      if (code !== 0) return reject(new Error(`Telegram curl failed: ${stderr.trim()}`));
-      try {
-        const body = JSON.parse(stdout);
-        if (!body.ok) return reject(new Error(`Telegram API failed: ${body.description}`));
-        console.log(`  telegram: sent message_id=${body.result.message_id}`);
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    });
-    child.stdin.end(curlConfig);
-  });
+  const result = await sendTelegramPayload({
+    chat_id: options.telegramEnChatId,
+    ...(options.telegramEnThreadId ? { message_thread_id: Number(options.telegramEnThreadId) } : {}),
+    text: message,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+  }, token, options.telegramProxy);
+  console.log(`  telegram_en: sent message_id=${result.message_id}`);
 }
 
 async function processBweRss(options, state) {
@@ -353,6 +415,11 @@ async function processBweRss(options, state) {
         console.warn(`  telegram error: ${error.message}`);
       }
     }
+    try {
+      await sendTelegramEnglish(item, options);
+    } catch (error) {
+      console.warn(`  telegram_en error: ${error.message}`);
+    }
     state.seenBweLinks.push(item.id);
     await writeState(state);
   }
@@ -375,6 +442,11 @@ async function captureOne(id, options, state) {
     } catch (error) {
       console.warn(`  telegram error: ${error.message}`);
     }
+  }
+  try {
+    await sendTelegramEnglish(item, options);
+  } catch (error) {
+    console.warn(`  telegram_en error: ${error.message}`);
   }
 
   state.lastSeenId = Math.max(state.lastSeenId || 0, news.id);

@@ -10,6 +10,7 @@ Polls `flash.biteagle.xyz` fast-news records and pushes new items to a Telegram 
 - Sends Telegram messages with a clean format
 - Supports Telegram forum topics through `message_thread_id`
 - Polls BWEnews RSS as a second source, with RSS de-duplication
+- Optionally translates pushed content through a local LibreTranslate service and sends an English copy to a second Telegram target
 - Includes a source-discovery helper for historical `source` host scanning
 
 ## Configuration
@@ -22,6 +23,9 @@ TELEGRAM_CHAT_ID=-1001234567890
 TELEGRAM_MESSAGE_THREAD_ID=2716
 TELEGRAM_PROXY=http://127.0.0.1:7890
 BWE_RSS_URL=https://rss-public.bwe-ws.com/
+TELEGRAM_EN_CHAT_ID=-1009876543210
+TELEGRAM_EN_MESSAGE_THREAD_ID=1234
+TRANSLATE_URL=http://127.0.0.1:5000/translate
 ```
 
 `TELEGRAM_PROXY` is optional. Leave it empty on a server that can reach Telegram directly.
@@ -47,6 +51,18 @@ BWEnews RSS polling is enabled by default. Disable it with:
 ```bash
 node biteagle_news_feed.mjs --mode poll --telegram --no-bwe-rss
 ```
+
+## English Translation Push
+
+Run a local LibreTranslate server on `127.0.0.1:5000`, then set:
+
+```text
+TELEGRAM_EN_CHAT_ID=-1009876543210
+TELEGRAM_EN_MESSAGE_THREAD_ID=1234
+TRANSLATE_URL=http://127.0.0.1:5000/translate
+```
+
+The Chinese push continues even if translation fails. English messages use `Read more` as the hidden link text and disable link previews.
 
 To override the Telegram target from the command line:
 
